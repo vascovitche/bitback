@@ -1,0 +1,71 @@
+--- a/src/Transaction/Mutator/AbstractCollectionMutator.php
++++ b/src/Transaction/Mutator/AbstractCollectionMutator.php
+@@ -4,6 +4,8 @@
+ 
+ abstract class AbstractCollectionMutator implements \Iterator, \ArrayAccess, \Countable
+ {
++    protected ?\Iterator $iter = null;
++
+     /**
+      * @var \SplFixedArray
+      */
+@@ -38,7 +40,8 @@
+      */
+     public function rewind()
+     {
+-        $this->set->rewind();
++        $this->iter = $this->set->getIterator();
++        $this->iter->rewind();
+     }
+ 
+     /**
+@@ -46,7 +49,7 @@
+      */
+     public function current()
+     {
+-        return $this->set->current();
++        return $this->iterator()->current();
+     }
+ 
+     /**
+@@ -54,7 +57,7 @@
+      */
+     public function key()
+     {
+-        return $this->set->key();
++        return $this->iterator()->key();
+     }
+ 
+     /**
+@@ -62,7 +65,7 @@
+      */
+     public function next()
+     {
+-        $this->set->next();
++        $this->iterator()->next();
+     }
+ 
+     /**
+@@ -70,7 +73,7 @@
+      */
+     public function valid()
+     {
+-        return $this->set->valid();
++        return $this->iterator()->valid();
+     }
+ 
+     /**
+@@ -114,4 +117,13 @@
+     {
+         $this->set->offsetSet($offset, $value);
+     }
++
++    protected function iterator(): \Iterator
++    {
++        if ($this->iter === null) {
++            $this->iter = $this->set->getIterator();
++        }
++
++        return $this->iter;
++    }
+ }

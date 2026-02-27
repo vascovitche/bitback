@@ -7,10 +7,12 @@
     "license": "MIT",
     "require": {
         "php": "^8.2",
+        "bitwasp/bitcoin": "^0.0.35",
         "laravel/framework": "^12.0",
         "laravel/tinker": "^2.10.1"
     },
     "require-dev": {
+        "cweagans/composer-patches": "^2.0",
         "fakerphp/faker": "^1.23",
         "laravel/pail": "^1.2.2",
         "laravel/pint": "^1.24",
@@ -70,6 +72,15 @@
     "extra": {
         "laravel": {
             "dont-discover": []
+        },
+        "patches": {
+            "mdanter/ecc": {
+                "Fix GMP pow overflow (PHP 8.4)": "patches/mdanter-ecc-gmp-fix.patch"
+            },
+            "bitwasp/bitcoin": {
+                "PHP 8.4 fix: AbstractCollectionMutator": "patches/bitwasp-abstract-collection-mutator.patch",
+                "PHP 8.4 fix: InputCollectionMutator": "patches/bitwasp-input-collection-mutator.patch"
+            }
         }
     },
     "config": {
@@ -77,6 +88,7 @@
         "preferred-install": "dist",
         "sort-packages": true,
         "allow-plugins": {
+            "cweagans/composer-patches": true,
             "pestphp/pest-plugin": true,
             "php-http/discovery": true
         }
