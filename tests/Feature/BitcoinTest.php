@@ -12,6 +12,7 @@ class BitcoinTest extends TestCase
     private string $secondAddress = 'tb1...';
     private int $amountSats = 1000;
     private int $feeSats = 1000;
+    private string $txId = '93dd...';
 
     public function test_bitcoin_create_wallet(): void
     {
@@ -34,6 +35,12 @@ class BitcoinTest extends TestCase
             'amount_sats' => $this->amountSats,
             'fee_sats' => $this->feeSats,
         ])->dump();
+        $response->assertStatus(200);
+    }
+
+    public function test_tx_check(): void
+    {
+        $response = $this->getJson("api/bitcoin/tx/{$this->txId}")->dump();
         $response->assertStatus(200);
     }
 

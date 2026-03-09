@@ -281,4 +281,32 @@ class BitcoinController extends Controller
         ]);
     }
 
+    public function txCheck(string $tx)
+    {
+        $baseUrl = config('bitcoin.explorer.url');
+        $response = Http::get("$baseUrl/tx/$tx");
+
+        if (!$response->successful()) {
+            return response()->json([
+                'error' => 'Failed to fetch tx info',
+                'status' => $response->status(),
+            ], 500);
+        }
+
+        $txData = $response->json();
+
+        return response()->json([
+            'txid' => $txData['txid'] ?? null,
+            'confirmed' => $txData['status']['confirmed'] ?? false,
+            'block_height' => $txData['status']['block_height'] ?? null,
+            'block_time' => isset($txData['status']['block_time'])
+                ? date('c', $txData['status']['block_time'])
+                : null,
+            'fee' => $txData['fee'] ?? null,
+            'size' => $txData['size'] ?? null,
+            'vin_count' => isset($txData['vin']) ? count($txData['vin']) : null,
+            'vout_count' => isset($txData['vout']) ? count($txData['vout']) : null,
+        ]);
+    }
+
 }
