@@ -6,7 +6,8 @@ use BitWasp\Bitcoin\Address\AddressCreator;
 use BitWasp\Bitcoin\Address\PayToPubKeyHashAddress;
 use BitWasp\Bitcoin\Address\SegwitAddress;
 use BitWasp\Bitcoin\Bitcoin;
-use BitWasp\Bitcoin\Key\PrivateKeyFactory;
+use BitWasp\Bitcoin\Crypto\Random\Random;
+use BitWasp\Bitcoin\Key\Factory\PrivateKeyFactory;
 use BitWasp\Bitcoin\Network\NetworkFactory;
 use BitWasp\Bitcoin\Script\ScriptFactory;
 use BitWasp\Bitcoin\Script\WitnessProgram;
@@ -34,7 +35,7 @@ class BitcoinController extends Controller
 
         try {
             $privateFactory = new PrivateKeyFactory();
-            $privateKey = $privateFactory->create(true);
+            $privateKey = $privateFactory->generateCompressed(new Random);
 
             $publicKey = $privateKey->getPublicKey();
             $compressed = $publicKey->isCompressed();
@@ -242,7 +243,8 @@ class BitcoinController extends Controller
         $unsignedTx = $builder->get();
 
         $ecAdapter = Bitcoin::getEcAdapter();
-        $privateKey = PrivateKeyFactory::fromWif($data['wif'], $ecAdapter);
+        $privateFactory = new PrivateKeyFactory($ecAdapter);
+        $privateKey = $privateFactory->fromWif($data['wif'], $network);
 
         $signer = new Signer($unsignedTx, $ecAdapter);
 
