@@ -118,8 +118,8 @@ class BitcoinController extends Controller
             'from_address' => 'required|string',
             'wif' => 'required|string',
             'to_address' => 'required|string',
-            'amount_sats' => 'required|integer|min:546',
-            'fee_sats' => 'required|integer|min:546',
+            'amount_sats' => 'required|integer|min:1',
+            'fee_sats' => 'required|integer|min:1',
             'change_address' => 'sometimes|string',
         ]);
 
@@ -311,4 +311,51 @@ class BitcoinController extends Controller
         ]);
     }
 
+    public function fee(Request $request)
+    {
+        $data = $request->validate([
+            'from_address' => 'required|string',
+            'to_address' => 'required|string',
+            'amount_sats' => 'required|integer|min:546',
+        ]);
+
+        $from = $data['from_address'];
+
+        $cfgNetwork = config('bitcoin.network', 'testnet');
+        $network = $cfgNetwork === 'mainnet' ? NetworkFactory::bitcoin() : NetworkFactory::bitcoinTestnet();
+        Bitcoin::setNetwork($network);
+
+        $baseUrl = config('bitcoin.explorer.url');
+        $utxoResponse = Http::get("$baseUrl/address/$from/utxo");
+        if (!$utxoResponse->successful()) {
+            return response()->json(['error' => 'Failed to fetch UTXOs', 'status' => $utxoResponse->status()], 500);
+        }
+        $utxos = $utxoResponse->json();
+        if (empty($utxos)) {
+            return response()->json(['error' => 'No UTXOs found for address'], 422);
+        }
+
+        $feesResp = Http::get("$baseUrl/fee-estimates");
+        if (!$feesResp->successful()) {
+            return response()->json([
+                'error' => 'Failed to fetch fee rates',
+            ], 500);
+        }
+        $feeRates = $feesResp->json();
+
+        $satPerByte = ceil($feeRates['3'] ?? 10);
+        $inputsCount = count($utxos);
+        $outputsCount = 2;
+        $estimatedSize = $inputsCount * 68 + $outputsCount * 31 + 10;
+        $fee = $estimatedSize * $satPerByte;
+
+        return response()->json([
+            'inputs_count' => $inputsCount,
+            'outputs_count' => $outputsCount,
+            'estimated_size_bytes' => $estimatedSize,
+            'sat_per_byte' => $satPerByte,
+            'fee_sats' => $fee,
+            'fee_btc' => $fee / 100_000_000,
+        ]);
+    }
 }

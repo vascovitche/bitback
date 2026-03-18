@@ -44,4 +44,14 @@ class BitcoinTest extends TestCase
         $response->assertStatus(200);
     }
 
+    public function test_fee(): void
+    {
+        $response = $this->postJson('api/bitcoin/fee', [
+            'from_address' => $this->firstAddress,
+            'to_address' => $this->secondAddress,
+            'amount_sats' => $this->amountSats,
+        ])->dump();
+        $response->assertStatus(200);
+    }
+
 }
