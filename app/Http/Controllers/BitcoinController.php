@@ -358,4 +358,53 @@ class BitcoinController extends Controller
             'fee_btc' => $fee / 100_000_000,
         ]);
     }
+
+    public function txs(string $address)
+    {
+        $baseUrl = config('bitcoin.explorer.url');
+
+        $allTxs = [];
+        $lastSeenTxId = null;
+
+        while (true) {
+            $url = $lastSeenTxId === null
+                ? "$baseUrl/address/$address/txs"
+                : "$baseUrl/address/$address/txs/chain/$lastSeenTxId";
+
+            $response = Http::get($url);
+
+            if (!$response->successful()) {
+                return response()->json([
+                    'error' => 'Failed to fetch transactions',
+                    'status' => $response->status(),
+                    'address' => $address,
+                ], 500);
+            }
+
+            $chunk = $response->json();
+
+            if (!is_array($chunk) || empty($chunk)) {
+                break;
+            }
+
+            $allTxs = array_merge($allTxs, $chunk);
+
+            if (count($chunk) < 25) {
+                break;
+            }
+
+            $lastTx = end($chunk);
+            $lastSeenTxId = $lastTx['txid'] ?? null;
+
+            if (!$lastSeenTxId) {
+                break;
+            }
+        }
+
+        return response()->json([
+            'address' => $address,
+            'transactions_count' => count($allTxs),
+            'transactions' => $allTxs,
+        ]);
+    }
 }

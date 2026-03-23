@@ -10,6 +10,7 @@ class BitcoinTest extends TestCase
     private string $firstAddress = 'tb1...';
     private string $wif = 'cSbyhfne...';
     private string $secondAddress = 'tb1...';
+    private string $addressWithManyTxs = 'tb1p72xwajwdxdfhmu5dp39sh8jdc6msnez0a7rq4gk5jeep0kvccnsqkgcj7e';
     private int $amountSats = 1000;
     private int $feeSats = 1000;
     private string $txId = '93dd...';
@@ -51,6 +52,12 @@ class BitcoinTest extends TestCase
             'to_address' => $this->secondAddress,
             'amount_sats' => $this->amountSats,
         ])->dump();
+        $response->assertStatus(200);
+    }
+
+    public function test_get_txs(): void
+    {
+        $response = $this->getJson("api/bitcoin/txs/{$this->addressWithManyTxs}")->dump();
         $response->assertStatus(200);
     }
 
