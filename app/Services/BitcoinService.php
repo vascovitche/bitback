@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Constants\BitcoinConstants;
 use App\DTO\AddressTransactionsDTO;
 use App\DTO\BalanceDTO;
 use App\DTO\EstimateFeeDTO;
@@ -100,9 +101,9 @@ class BitcoinService
             confirmedSats: $confirmed,
             unconfirmedSats: $unconfirmed,
             totalSats: $total,
-            confirmedBtc: $confirmed / 100_000_000,
-            unconfirmedBtc: $unconfirmed / 100_000_000,
-            totalBtc: $total / 100_000_000,
+            confirmedBtc: $confirmed / BitcoinConstants::SATOSHIS_PER_BTC,
+            unconfirmedBtc: $unconfirmed / BitcoinConstants::SATOSHIS_PER_BTC,
+            totalBtc: $total / BitcoinConstants::SATOSHIS_PER_BTC,
         );
     }
 
@@ -147,14 +148,14 @@ class BitcoinService
         }
 
         $inputsCount = count($utxos);
-        $outputsCount = 2;
+        $outputsCount = BitcoinConstants::DEFAULT_OUTPUTS_COUNT;
 
         $feesResp = Http::get("$baseUrl/fee-estimates");
         $feeRates = $feesResp->json();
 
-        $satPerByte = ceil($feeRates['3'] ?? 10);
+        $satPerByte = ceil($feeRates[BitcoinConstants::FEE_ESTIMATE_BLOCK_TARGET] ?? BitcoinConstants::DEFAULT_FEE_RATE_SAT_PER_BYTE);
 
-        $estimatedSize = $inputsCount * 68 + $outputsCount * 31 + 10;
+        $estimatedSize = $inputsCount * BitcoinConstants::INPUT_BYTES + $outputsCount * BitcoinConstants::OUTPUT_BYTES + BitcoinConstants::TX_BASE_BYTES;
 
         $fee = $estimatedSize * $satPerByte;
 
@@ -249,7 +250,7 @@ class BitcoinService
         $builder->payToAddress($amount, $toAddressObj);
 
         if ($change > 0) {
-            if ($change >= 546) {
+            if ($change >= BitcoinConstants::DUST_THRESHOLD_SATS) {
                 $builder->payToAddress($change, $changeAddressObj);
             } else {
                 $fee += $change;
@@ -344,10 +345,10 @@ class BitcoinService
         }
         $feeRates = $feesResp->json();
 
-        $satPerByte = (int) ceil($feeRates['3'] ?? 10);
+        $satPerByte = (int) ceil($feeRates[BitcoinConstants::FEE_ESTIMATE_BLOCK_TARGET] ?? BitcoinConstants::DEFAULT_FEE_RATE_SAT_PER_BYTE);
         $inputsCount = count($utxos);
-        $outputsCount = 2;
-        $estimatedSize = $inputsCount * 68 + $outputsCount * 31 + 10;
+        $outputsCount = BitcoinConstants::DEFAULT_OUTPUTS_COUNT;
+        $estimatedSize = $inputsCount * BitcoinConstants::INPUT_BYTES + $outputsCount * BitcoinConstants::OUTPUT_BYTES + BitcoinConstants::TX_BASE_BYTES;
         $fee = $estimatedSize * $satPerByte;
 
         return new FeeEstimateDTO(
@@ -356,7 +357,7 @@ class BitcoinService
             estimatedSizeBytes: $estimatedSize,
             satPerByte: $satPerByte,
             feeSats: $fee,
-            feeBtc: $fee / 100_000_000,
+            feeBtc: $fee / BitcoinConstants::SATOSHIS_PER_BTC,
         );
     }
 
@@ -426,7 +427,7 @@ class BitcoinService
 
             $allTxs = array_merge($allTxs, $chunk);
 
-            if (count($chunk) < 25) {
+            if (count($chunk) < BitcoinConstants::TX_PAGE_SIZE) {
                 break;
             }
 
