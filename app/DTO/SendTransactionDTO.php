@@ -6,7 +6,7 @@ class SendTransactionDTO
 {
     public function __construct(
         public string  $fromAddress,
-        public string  $wif,
+        public string  $privateHex,
         public string  $toAddress,
         public int     $amountSats,
         public int     $feeSats,
@@ -19,7 +19,7 @@ class SendTransactionDTO
     {
         return new self(
             fromAddress: $validated['from_address'],
-            wif: $validated['wif'],
+            privateHex: $validated['private_hex'],
             toAddress: $validated['to_address'],
             amountSats: (int)$validated['amount_sats'],
             feeSats: (int)$validated['fee_sats'],
@@ -27,4 +27,3 @@ class SendTransactionDTO
         );
     }
 }
-

@@ -24,7 +24,7 @@ class TransactionRequest extends FormRequest
     {
         return [
             'from_address' => 'required|string',
-            'wif' => 'required|string',
+            'private_hex' => 'required|string|size:64',
             'to_address' => 'required|string',
             'amount_sats' => 'required|integer|min:1',
             'fee_sats' => 'required|integer|min:1',

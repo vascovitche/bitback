@@ -80,7 +80,7 @@ class BitcoinService
      */
     public function getBalance(string $address): BalanceDTO
     {
-        $baseUrl = config('bitcoin.explorer.url');
+        $baseUrl = $this->explorerApiUrl();
 
         $response = Http::get("$baseUrl/address/$address");
 
@@ -121,7 +121,7 @@ class BitcoinService
         $network = $cfgNetwork === 'mainnet' ? NetworkFactory::bitcoin() : NetworkFactory::bitcoinTestnet();
         Bitcoin::setNetwork($network);
 
-        $baseUrl = config('bitcoin.explorer.url');
+        $baseUrl = $this->explorerApiUrl();
         $utxoResponse = Http::get("$baseUrl/address/$from/utxo");
 
         if (!$utxoResponse->successful()) {
@@ -262,7 +262,7 @@ class BitcoinService
 
         $ecAdapter = Bitcoin::getEcAdapter();
         $privateFactory = new PrivateKeyFactory($ecAdapter);
-        $privateKey = $privateFactory->fromWif($dto->wif, $network);
+        $privateKey = $privateFactory->fromHexCompressed($dto->privateHex);
 
         $signer = new Signer($unsignedTx, $ecAdapter);
 
@@ -298,7 +298,7 @@ class BitcoinService
             success: true,
             txid: $txidFromApi,
             rawTxHex: $rawHex,
-            explorerUrl: "https://blockstream.info/testnet/tx/{$txidFromApi}",
+            explorerUrl: $this->explorerTxUrl() . $txidFromApi,
             changeAddress: $changeAddress,
             changeSats: $change,
             feeSats: $fee,
@@ -317,7 +317,7 @@ class BitcoinService
         $network = $cfgNetwork === 'mainnet' ? NetworkFactory::bitcoin() : NetworkFactory::bitcoinTestnet();
         Bitcoin::setNetwork($network);
 
-        $baseUrl = config('bitcoin.explorer.url');
+        $baseUrl = $this->explorerApiUrl();
         $utxoResponse = Http::get("$baseUrl/address/$from/utxo");
         if (!$utxoResponse->successful()) {
             throw new BitcoinTransactionException(
@@ -366,7 +366,7 @@ class BitcoinService
      */
     public function checkTransaction(string $tx): TransactionDTO
     {
-        $baseUrl = config('bitcoin.explorer.url');
+        $baseUrl = $this->explorerApiUrl();
         $response = Http::get("$baseUrl/tx/$tx");
 
         if (!$response->successful()) {
@@ -397,7 +397,7 @@ class BitcoinService
      */
     public function getAddressTransactions(string $address): AddressTransactionsDTO
     {
-        $baseUrl = config('bitcoin.explorer.url');
+        $baseUrl = $this->explorerApiUrl();
 
         $allTxs = [];
         $lastSeenTxId = null;
@@ -446,4 +446,13 @@ class BitcoinService
         );
     }
 
+    private function explorerApiUrl(): string
+    {
+        return config('bitcoin.explorer.base_url') . '/api';
+    }
+
+    private function explorerTxUrl(): string
+    {
+        return config('bitcoin.explorer.base_url') . '/tx/';
+    }
 }
