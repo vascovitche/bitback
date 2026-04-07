@@ -5,6 +5,14 @@ namespace App\Http\Controllers;
 use App\Exceptions\BitcoinTransactionException;
 use App\Http\Requests\FeeRequest;
 use App\Http\Requests\TransactionRequest;
+use App\Http\Resources\AddressTransactionsResource;
+use App\Http\Resources\BalanceResource;
+use App\Http\Resources\FeeEstimateResource;
+use App\Http\Resources\TransactionResource;
+use App\Http\Resources\TransactionResultResource;
+use App\Http\Resources\WalletResource;
+use App\DTO\EstimateFeeDTO;
+use App\DTO\SendTransactionDTO;
 use App\Services\BitcoinService;
 use Exception;
 use Symfony\Component\HttpFoundation\Response;
@@ -19,7 +27,8 @@ class BitcoinController extends Controller
     public function wallet()
     {
         try {
-            return response()->json($this->service->createWallet());
+            $wallet = $this->service->createWallet();
+            return response()->json(WalletResource::make($wallet));
         } catch (Exception $e) {
             return response()->json([
                 'error' => 'Failed to create wallet',
@@ -31,7 +40,8 @@ class BitcoinController extends Controller
     public function balance(string $address)
     {
         try {
-            return response()->json($this->service->getBalance($address));
+            $balance = $this->service->getBalance($address);
+            return response()->json(BalanceResource::make($balance));
         } catch (Exception $e) {
             return response()->json([
                 'error' => 'Failed to fetch address balance info',
@@ -43,7 +53,9 @@ class BitcoinController extends Controller
     public function tx(TransactionRequest $request)
     {
         try {
-            return response()->json($this->service->sendTransaction($request->validated()));
+            $data = SendTransactionDTO::fromRequest($request->validated());
+            $result = $this->service->sendTransaction($data);
+            return response()->json(TransactionResultResource::make($result));
         } catch (BitcoinTransactionException $e) {
             return response()->json([
                 'error' => $e->getMessage(),
@@ -60,7 +72,8 @@ class BitcoinController extends Controller
     public function txCheck(string $tx)
     {
         try {
-            return response()->json($this->service->checkTransaction($tx));
+            $transaction = $this->service->checkTransaction($tx);
+            return response()->json(TransactionResource::make($transaction));
         } catch (BitcoinTransactionException $e) {
             return response()->json([
                 'error' => $e->getMessage(),
@@ -77,7 +90,9 @@ class BitcoinController extends Controller
     public function fee(FeeRequest $request)
     {
         try {
-            return response()->json($this->service->estimateFee($request->validated()));
+            $data = EstimateFeeDTO::fromRequest($request->validated());
+            $estimate = $this->service->estimateFee($data);
+            return response()->json(FeeEstimateResource::make($estimate));
         } catch (BitcoinTransactionException $e) {
             return response()->json([
                 'error' => $e->getMessage(),
@@ -94,7 +109,8 @@ class BitcoinController extends Controller
     public function txs(string $address)
     {
         try {
-            return response()->json($this->service->getAddressTransactions($address));
+            $addressTransactions = $this->service->getAddressTransactions($address);
+            return response()->json(AddressTransactionsResource::make($addressTransactions));
         } catch (BitcoinTransactionException $e) {
             return response()->json([
                 'error' => $e->getMessage(),

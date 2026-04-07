@@ -2,6 +2,14 @@
 
 namespace App\Services;
 
+use App\DTO\AddressTransactionsDTO;
+use App\DTO\BalanceDTO;
+use App\DTO\EstimateFeeDTO;
+use App\DTO\FeeEstimateDTO;
+use App\DTO\SendTransactionDTO;
+use App\DTO\TransactionDTO;
+use App\DTO\TransactionResultDTO;
+use App\DTO\WalletDTO;
 use App\Exceptions\BitcoinTransactionException;
 use BitWasp\Bitcoin\Address\AddressCreator;
 use BitWasp\Bitcoin\Address\PayToPubKeyHashAddress;
@@ -29,7 +37,7 @@ class BitcoinService
      * @throws RandomBytesFailure
      * @throws Exception
      */
-    public function createWallet(): array
+    public function createWallet(): WalletDTO
     {
         $cfgNetwork = config('bitcoin.network', 'testnet');
         $network = $cfgNetwork === 'mainnet' ? NetworkFactory::bitcoin() : NetworkFactory::bitcoinTestnet();
@@ -55,21 +63,21 @@ class BitcoinService
 
         $wif = method_exists($privateKey, 'toWif') ? $privateKey->toWif() : null;
 
-        return [
-            'network' => $cfgNetwork,
-            'wif' => $wif,
-            'private_hex' => method_exists($privateKey, 'getHex') ? $privateKey->getHex() : null,
-            'public_hex' => $publicKeyHex,
-            'compressed' => $compressed,
-            'address_bech32' => $bech32,
-            'address_legacy' => $legacy,
-        ];
+        return new WalletDTO(
+            network: $cfgNetwork,
+            wif: $wif,
+            privateHex: method_exists($privateKey, 'getHex') ? $privateKey->getHex() : null,
+            publicKeyHex: $publicKeyHex,
+            compressed: $compressed,
+            bech32: $bech32,
+            legacy: $legacy,
+        );
     }
 
     /**
      * @throws ConnectionException
      */
-    public function getBalance(string $address): array
+    public function getBalance(string $address): BalanceDTO
     {
         $baseUrl = config('bitcoin.explorer.url');
 
@@ -87,28 +95,26 @@ class BitcoinService
 
         $total = $confirmed + $unconfirmed;
 
-        return [
-            'address' => $address,
-
-            'confirmed_sats' => $confirmed,
-            'unconfirmed_sats' => $unconfirmed,
-            'total_sats' => $total,
-
-            'confirmed_btc' => $confirmed / 100_000_000,
-            'unconfirmed_btc' => $unconfirmed / 100_000_000,
-            'total_btc' => $total / 100_000_000,
-        ];
+        return new BalanceDTO(
+            address: $address,
+            confirmedSats: $confirmed,
+            unconfirmedSats: $unconfirmed,
+            totalSats: $total,
+            confirmedBtc: $confirmed / 100_000_000,
+            unconfirmedBtc: $unconfirmed / 100_000_000,
+            totalBtc: $total / 100_000_000,
+        );
     }
 
     /**
      * @throws ConnectionException
      * @throws Exception
      */
-    public function sendTransaction(array $data): array
+    public function sendTransaction(SendTransactionDTO $dto): TransactionResultDTO
     {
-        $from = $data['from_address'];
-        $to = $data['to_address'];
-        $amount = (int)$data['amount_sats'];
+        $from = $dto->fromAddress;
+        $to = $dto->toAddress;
+        $amount = $dto->amountSats;
 
         $cfgNetwork = config('bitcoin.network', 'testnet');
         $network = $cfgNetwork === 'mainnet' ? NetworkFactory::bitcoin() : NetworkFactory::bitcoinTestnet();
@@ -223,7 +229,7 @@ class BitcoinService
 
         $change = $totalIn - $need;
 
-        $changeAddress = $data['change_address'] ?? $data['from_address'];
+        $changeAddress = $dto->changeAddress ?? $dto->fromAddress;
 
         $addressCreator = new AddressCreator();
         $toAddressObj = $addressCreator->fromString($to);
@@ -255,7 +261,7 @@ class BitcoinService
 
         $ecAdapter = Bitcoin::getEcAdapter();
         $privateFactory = new PrivateKeyFactory($ecAdapter);
-        $privateKey = $privateFactory->fromWif($data['wif'], $network);
+        $privateKey = $privateFactory->fromWif($dto->wif, $network);
 
         $signer = new Signer($unsignedTx, $ecAdapter);
 
@@ -287,24 +293,24 @@ class BitcoinService
 
         $txidFromApi = trim($broadcastResponse->body());
 
-        return [
-            'success' => true,
-            'txid' => $txidFromApi,
-            'raw_tx_hex' => $rawHex,
-            'explorer_url' => "https://blockstream.info/testnet/tx/{$txidFromApi}",
-            'change_address' => $changeAddress,
-            'change_sats' => $change,
-            'fee_sats' => $fee,
-        ];
+        return new TransactionResultDTO(
+            success: true,
+            txid: $txidFromApi,
+            rawTxHex: $rawHex,
+            explorerUrl: "https://blockstream.info/testnet/tx/{$txidFromApi}",
+            changeAddress: $changeAddress,
+            changeSats: $change,
+            feeSats: $fee,
+        );
     }
 
     /**
      * @throws ConnectionException
      * @throws Exception
      */
-    public function estimateFee(array $data): array
+    public function estimateFee(EstimateFeeDTO $dto): FeeEstimateDTO
     {
-        $from = $data['from_address'];
+        $from = $dto->fromAddress;
 
         $cfgNetwork = config('bitcoin.network', 'testnet');
         $network = $cfgNetwork === 'mainnet' ? NetworkFactory::bitcoin() : NetworkFactory::bitcoinTestnet();
@@ -338,26 +344,26 @@ class BitcoinService
         }
         $feeRates = $feesResp->json();
 
-        $satPerByte = ceil($feeRates['3'] ?? 10);
+        $satPerByte = (int) ceil($feeRates['3'] ?? 10);
         $inputsCount = count($utxos);
         $outputsCount = 2;
         $estimatedSize = $inputsCount * 68 + $outputsCount * 31 + 10;
         $fee = $estimatedSize * $satPerByte;
 
-        return [
-            'inputs_count' => $inputsCount,
-            'outputs_count' => $outputsCount,
-            'estimated_size_bytes' => $estimatedSize,
-            'sat_per_byte' => $satPerByte,
-            'fee_sats' => $fee,
-            'fee_btc' => $fee / 100_000_000,
-        ];
+        return new FeeEstimateDTO(
+            inputsCount: $inputsCount,
+            outputsCount: $outputsCount,
+            estimatedSizeBytes: $estimatedSize,
+            satPerByte: $satPerByte,
+            feeSats: $fee,
+            feeBtc: $fee / 100_000_000,
+        );
     }
 
     /**
      * @throws ConnectionException
      */
-    public function checkTransaction(string $tx): array
+    public function checkTransaction(string $tx): TransactionDTO
     {
         $baseUrl = config('bitcoin.explorer.url');
         $response = Http::get("$baseUrl/tx/$tx");
@@ -371,24 +377,24 @@ class BitcoinService
 
         $txData = $response->json();
 
-        return [
-            'txid' => $txData['txid'] ?? null,
-            'confirmed' => $txData['status']['confirmed'] ?? false,
-            'block_height' => $txData['status']['block_height'] ?? null,
-            'block_time' => isset($txData['status']['block_time'])
+        return new TransactionDTO(
+            txid: $txData['txid'] ?? null,
+            confirmed: $txData['status']['confirmed'] ?? false,
+            blockHeight: $txData['status']['block_height'] ?? null,
+            blockTime: isset($txData['status']['block_time'])
                 ? date('c', $txData['status']['block_time'])
                 : null,
-            'fee' => $txData['fee'] ?? null,
-            'size' => $txData['size'] ?? null,
-            'vin_count' => isset($txData['vin']) ? count($txData['vin']) : null,
-            'vout_count' => isset($txData['vout']) ? count($txData['vout']) : null,
-        ];
+            fee: $txData['fee'] ?? null,
+            size: $txData['size'] ?? null,
+            vinCount: isset($txData['vin']) ? count($txData['vin']) : null,
+            voutCount: isset($txData['vout']) ? count($txData['vout']) : null,
+        );
     }
 
     /**
      * @throws ConnectionException
      */
-    public function getAddressTransactions(string $address): array
+    public function getAddressTransactions(string $address): AddressTransactionsDTO
     {
         $baseUrl = config('bitcoin.explorer.url');
 
@@ -432,11 +438,11 @@ class BitcoinService
             }
         }
 
-        return [
-            'address' => $address,
-            'transactions_count' => count($allTxs),
-            'transactions' => $allTxs,
-        ];
+        return new AddressTransactionsDTO(
+            address: $address,
+            transactionsCount: count($allTxs),
+            transactions: $allTxs,
+        );
     }
 
 }
