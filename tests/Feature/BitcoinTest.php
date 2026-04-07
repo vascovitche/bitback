@@ -8,7 +8,7 @@ class BitcoinTest extends TestCase
 {
 
     private string $firstAddress = 'tb1...';
-    private string $wif = 'cSbyhfne...';
+    private string $privateHex = 'cSbyhfne...';
     private string $secondAddress = 'tb1...';
     private string $addressWithManyTxs = 'tb1p72xwajwdxdfhmu5dp39sh8jdc6msnez0a7rq4gk5jeep0kvccnsqkgcj7e';
     private int $amountSats = 1000;
@@ -31,7 +31,7 @@ class BitcoinTest extends TestCase
     {
         $response = $this->postJson('api/bitcoin/tx', [
             'from_address' => $this->firstAddress,
-            'wif' => $this->wif,
+            'private_hex' => $this->privateHex,
             'to_address' => $this->secondAddress,
             'amount_sats' => $this->amountSats,
             'fee_sats' => $this->feeSats,

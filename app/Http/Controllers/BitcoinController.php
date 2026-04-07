@@ -2,409 +2,125 @@
 
 namespace App\Http\Controllers;
 
-use BitWasp\Bitcoin\Address\AddressCreator;
-use BitWasp\Bitcoin\Address\PayToPubKeyHashAddress;
-use BitWasp\Bitcoin\Address\SegwitAddress;
-use BitWasp\Bitcoin\Bitcoin;
-use BitWasp\Bitcoin\Crypto\Random\Random;
-use BitWasp\Bitcoin\Key\Factory\PrivateKeyFactory;
-use BitWasp\Bitcoin\Network\NetworkFactory;
-use BitWasp\Bitcoin\Script\ScriptFactory;
-use BitWasp\Bitcoin\Script\WitnessProgram;
-use BitWasp\Bitcoin\Transaction\Factory\Signer;
-use BitWasp\Bitcoin\Transaction\Factory\TxBuilder;
-use BitWasp\Bitcoin\Transaction\OutPoint;
-use BitWasp\Bitcoin\Transaction\TransactionOutput;
-use BitWasp\Buffertools\Buffer;
+use App\Exceptions\BitcoinTransactionException;
+use App\Http\Requests\FeeRequest;
+use App\Http\Requests\TransactionRequest;
+use App\Http\Resources\AddressTransactionsResource;
+use App\Http\Resources\BalanceResource;
+use App\Http\Resources\FeeEstimateResource;
+use App\Http\Resources\TransactionResource;
+use App\Http\Resources\TransactionResultResource;
+use App\Http\Resources\WalletResource;
+use App\DTO\EstimateFeeDTO;
+use App\DTO\SendTransactionDTO;
+use App\Services\BitcoinService;
 use Exception;
-use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Http;
+use Symfony\Component\HttpFoundation\Response;
 
 class BitcoinController extends Controller
 {
-    /**
-     * @throws Exception
-     */
+
+    public function __construct(private readonly BitcoinService $service)
+    {
+    }
+
     public function wallet()
     {
-        $cfgNetwork = config('bitcoin.network', 'testnet');
-        $network = $cfgNetwork === 'mainnet' ? NetworkFactory::bitcoin() : NetworkFactory::bitcoinTestnet();
-
-        Bitcoin::setNetwork($network);
-
         try {
-            $privateFactory = new PrivateKeyFactory();
-            $privateKey = $privateFactory->generateCompressed(new Random);
-
-            $publicKey = $privateKey->getPublicKey();
-            $compressed = $publicKey->isCompressed();
-
-            $publicKeyHex = $publicKey->getHex();
-
-            $pubKeyHash = $publicKey->getPubKeyHash();
-
-            $p2wpkhWP = WitnessProgram::v0($pubKeyHash);
-            $segwit = new SegwitAddress($p2wpkhWP);
-            $bech32 = $segwit->getAddress($network);
-
-            $p2pkh = new PayToPubKeyHashAddress($pubKeyHash);
-            $legacy = $p2pkh->getAddress($network);
-
-            $wif = method_exists($privateKey, 'toWif') ? $privateKey->toWif() : null;
-
-            return response()->json([
-                'network' => $cfgNetwork,
-                'wif' => $wif,
-                'private_hex' => method_exists($privateKey, 'getHex') ? $privateKey->getHex() : null,
-                'public_hex' => $publicKeyHex,
-                'compressed' => $compressed,
-                'address_bech32' => $bech32,
-                'address_legacy' => $legacy,
-            ]);
+            $wallet = $this->service->createWallet();
+            return response()->json(WalletResource::make($wallet));
         } catch (Exception $e) {
             return response()->json([
                 'error' => 'Failed to create wallet',
                 'message' => $e->getMessage(),
-            ], 500);
+            ], Response::HTTP_BAD_REQUEST);
         }
     }
 
-    /**
-     * @throws ConnectionException
-     */
     public function balance(string $address)
     {
-
-        $baseUrl = config('bitcoin.explorer.url');
-
-        $response = Http::get("$baseUrl/address/$address");
-
-        if (!$response->successful()) {
+        try {
+            $balance = $this->service->getBalance($address);
+            return response()->json(BalanceResource::make($balance));
+        } catch (Exception $e) {
             return response()->json([
-                'error' => 'Failed to fetch address info',
-                'status' => $response->status(),
-            ], 500);
+                'error' => 'Failed to fetch address balance info',
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
         }
-
-        $data = $response->json();
-
-        $confirmed =
-            ($data['chain_stats']['funded_txo_sum'] ?? 0)
-            - ($data['chain_stats']['spent_txo_sum'] ?? 0);
-
-        $unconfirmed =
-            ($data['mempool_stats']['funded_txo_sum'] ?? 0)
-            - ($data['mempool_stats']['spent_txo_sum'] ?? 0);
-
-        $total = $confirmed + $unconfirmed;
-
-        return response()->json([
-            'address' => $address,
-
-            'confirmed_sats' => $confirmed,
-            'unconfirmed_sats' => $unconfirmed,
-            'total_sats' => $total,
-
-            'confirmed_btc' => $confirmed / 100_000_000,
-            'unconfirmed_btc' => $unconfirmed / 100_000_000,
-            'total_btc' => $total / 100_000_000,
-        ]);
     }
 
-    public function tx(Request $request)
+    public function tx(TransactionRequest $request)
     {
-        $data = $request->validate([
-            'from_address' => 'required|string',
-            'wif' => 'required|string',
-            'to_address' => 'required|string',
-            'amount_sats' => 'required|integer|min:1',
-            'fee_sats' => 'required|integer|min:1',
-            'change_address' => 'sometimes|string',
-        ]);
-
-        $from = $data['from_address'];
-        $to = $data['to_address'];
-        $amount = (int)$data['amount_sats'];
-
-        $cfgNetwork = config('bitcoin.network', 'testnet');
-        $network = $cfgNetwork === 'mainnet' ? NetworkFactory::bitcoin() : NetworkFactory::bitcoinTestnet();
-        Bitcoin::setNetwork($network);
-
-        $baseUrl = config('bitcoin.explorer.url');
-        $utxoResponse = Http::get("$baseUrl/address/$from/utxo");
-        if (!$utxoResponse->successful()) {
-            return response()->json(['error' => 'Failed to fetch UTXOs', 'status' => $utxoResponse->status()], 500);
-        }
-        $utxos = $utxoResponse->json();
-        if (empty($utxos)) {
-            return response()->json(['error' => 'No UTXOs found for address'], 422);
-        }
-
-        $inputsCount = count($utxos);
-        $outputsCount = 2;
-
-        $feesResp = Http::get("$baseUrl/fee-estimates");
-        $feeRates = $feesResp->json();
-
-        $satPerByte = ceil($feeRates['3'] ?? 10);
-
-        $estimatedSize = $inputsCount * 68 + $outputsCount * 31 + 10;
-
-        $fee = $estimatedSize * $satPerByte;
-
-        $need = $amount + $fee;
-
-        $totalAvailable = array_sum(
-            array_map(
-                fn($u) => (int)($u['value'] ?? 0),
-                $utxos
-            )
-        );
-
-        if ($totalAvailable < $need) {
+        try {
+            $data = SendTransactionDTO::fromRequest($request->validated());
+            $result = $this->service->sendTransaction($data);
+            return response()->json(TransactionResultResource::make($result));
+        } catch (BitcoinTransactionException $e) {
             return response()->json([
-                'error' => 'Insufficient funds',
-                'need_sats' => $need,
-                'available_sats' => $totalAvailable,
-            ], 400);
-        }
-
-        $prevTxOuts = [];
-
-        foreach ($utxos as $i => $u) {
-            $txid = $u['txid'];
-            $vout = (int)$u['vout'];
-
-            $txResp = Http::get("$baseUrl/tx/$txid");
-            if (!$txResp->successful()) {
-                return response()->json([
-                    'error' => 'Failed to fetch tx data',
-                    'txid' => $txid,
-                ], 500);
-            }
-
-            $txData = $txResp->json();
-
-            if (!isset($txData['vout'][$vout])) {
-                return response()->json([
-                    'error' => 'vout not found in tx',
-                    'txid' => $txid,
-                    'vout' => $vout,
-                ], 422);
-            }
-
-            $prev = $txData['vout'][$vout];
-
-            $scriptPubKeyHex = $prev['scriptpubkey'];
-            $value = (int)$prev['value'];
-
-            $prevTxOuts[$i] = new TransactionOutput(
-                $value,
-                ScriptFactory::fromHex($scriptPubKeyHex)
-            );
-        }
-
-        $totalIn = 0;
-        foreach ($utxos as $u) {
-            $totalIn += (int)$u['value'];
-        }
-
-        $change = $totalIn - $need;
-
-        $changeAddress = $data['change_address'] ?? $data['from_address'];
-
-        $addressCreator = new AddressCreator();
-        $toAddressObj = $addressCreator->fromString($to);
-        $changeAddressObj = $addressCreator->fromString($changeAddress);
-
-        $builder = new TxBuilder();
-
-        foreach ($utxos as $utxo) {
-            $builder->spendOutPoint(
-                new OutPoint(
-                    Buffer::hex($utxo['txid'], 32),
-                    (int)$utxo['vout']
-                )
-            );
-        }
-
-        $builder->payToAddress($amount, $toAddressObj);
-
-        if ($change > 0) {
-            if ($change >= 546) {
-                $builder->payToAddress($change, $changeAddressObj);
-            } else {
-                $fee += $change;
-                $change = 0;
-            }
-        }
-
-        $unsignedTx = $builder->get();
-
-        $ecAdapter = Bitcoin::getEcAdapter();
-        $privateFactory = new PrivateKeyFactory($ecAdapter);
-        $privateKey = $privateFactory->fromWif($data['wif'], $network);
-
-        $signer = new Signer($unsignedTx, $ecAdapter);
-
-        foreach ($prevTxOuts as $i => $prevTxOut) {
-            $input = $signer->input($i, $prevTxOut);
-            $input->sign($privateKey);
-        }
-
-        $signedTx = $signer->get();
-
-        $rawHex = $signedTx->getHex();
-
-        $broadcastResponse = Http::withHeaders([
-            'Content-Type' => 'text/plain',
-        ])->withBody($rawHex, 'text/plain')
-            ->post("$baseUrl/tx");
-
-        if (!$broadcastResponse->successful()) {
+                'error' => $e->getMessage(),
+                'context' => $e->getContext(),
+            ], $e->getStatus());
+        } catch (Exception $e) {
             return response()->json([
-                'error' => 'Broadcast failed',
-                'status' => $broadcastResponse->status(),
-                'body' => $broadcastResponse->body(),
-            ], 422);
+                'error' => 'Failed to send transaction',
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
         }
-
-        $txidFromApi = trim($broadcastResponse->body());
-
-        return response()->json([
-            'success' => true,
-            'txid' => $txidFromApi,
-            'raw_tx_hex' => $rawHex,
-            'explorer_url' => "https://blockstream.info/testnet/tx/{$txidFromApi}",
-            'change_address' => $changeAddress,
-            'change_sats' => $change,
-            'fee_sats' => $fee,
-        ]);
     }
 
     public function txCheck(string $tx)
     {
-        $baseUrl = config('bitcoin.explorer.url');
-        $response = Http::get("$baseUrl/tx/$tx");
-
-        if (!$response->successful()) {
+        try {
+            $transaction = $this->service->checkTransaction($tx);
+            return response()->json(TransactionResource::make($transaction));
+        } catch (BitcoinTransactionException $e) {
             return response()->json([
-                'error' => 'Failed to fetch tx info',
-                'status' => $response->status(),
-            ], 500);
+                'error' => $e->getMessage(),
+                'context' => $e->getContext(),
+            ], $e->getStatus());
+        } catch (Exception $e) {
+            return response()->json([
+                'error' => 'Failed to check transaction',
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
         }
-
-        $txData = $response->json();
-
-        return response()->json([
-            'txid' => $txData['txid'] ?? null,
-            'confirmed' => $txData['status']['confirmed'] ?? false,
-            'block_height' => $txData['status']['block_height'] ?? null,
-            'block_time' => isset($txData['status']['block_time'])
-                ? date('c', $txData['status']['block_time'])
-                : null,
-            'fee' => $txData['fee'] ?? null,
-            'size' => $txData['size'] ?? null,
-            'vin_count' => isset($txData['vin']) ? count($txData['vin']) : null,
-            'vout_count' => isset($txData['vout']) ? count($txData['vout']) : null,
-        ]);
     }
 
-    public function fee(Request $request)
+    public function fee(FeeRequest $request)
     {
-        $data = $request->validate([
-            'from_address' => 'required|string',
-            'to_address' => 'required|string',
-            'amount_sats' => 'required|integer|min:546',
-        ]);
-
-        $from = $data['from_address'];
-
-        $cfgNetwork = config('bitcoin.network', 'testnet');
-        $network = $cfgNetwork === 'mainnet' ? NetworkFactory::bitcoin() : NetworkFactory::bitcoinTestnet();
-        Bitcoin::setNetwork($network);
-
-        $baseUrl = config('bitcoin.explorer.url');
-        $utxoResponse = Http::get("$baseUrl/address/$from/utxo");
-        if (!$utxoResponse->successful()) {
-            return response()->json(['error' => 'Failed to fetch UTXOs', 'status' => $utxoResponse->status()], 500);
-        }
-        $utxos = $utxoResponse->json();
-        if (empty($utxos)) {
-            return response()->json(['error' => 'No UTXOs found for address'], 422);
-        }
-
-        $feesResp = Http::get("$baseUrl/fee-estimates");
-        if (!$feesResp->successful()) {
+        try {
+            $data = EstimateFeeDTO::fromRequest($request->validated());
+            $estimate = $this->service->estimateFee($data);
+            return response()->json(FeeEstimateResource::make($estimate));
+        } catch (BitcoinTransactionException $e) {
             return response()->json([
-                'error' => 'Failed to fetch fee rates',
-            ], 500);
+                'error' => $e->getMessage(),
+                'context' => $e->getContext(),
+            ], $e->getStatus());
+        } catch (Exception $e) {
+            return response()->json([
+                'error' => 'Failed to estimate fee',
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
         }
-        $feeRates = $feesResp->json();
-
-        $satPerByte = ceil($feeRates['3'] ?? 10);
-        $inputsCount = count($utxos);
-        $outputsCount = 2;
-        $estimatedSize = $inputsCount * 68 + $outputsCount * 31 + 10;
-        $fee = $estimatedSize * $satPerByte;
-
-        return response()->json([
-            'inputs_count' => $inputsCount,
-            'outputs_count' => $outputsCount,
-            'estimated_size_bytes' => $estimatedSize,
-            'sat_per_byte' => $satPerByte,
-            'fee_sats' => $fee,
-            'fee_btc' => $fee / 100_000_000,
-        ]);
     }
 
     public function txs(string $address)
     {
-        $baseUrl = config('bitcoin.explorer.url');
-
-        $allTxs = [];
-        $lastSeenTxId = null;
-
-        while (true) {
-            $url = $lastSeenTxId === null
-                ? "$baseUrl/address/$address/txs"
-                : "$baseUrl/address/$address/txs/chain/$lastSeenTxId";
-
-            $response = Http::get($url);
-
-            if (!$response->successful()) {
-                return response()->json([
-                    'error' => 'Failed to fetch transactions',
-                    'status' => $response->status(),
-                    'address' => $address,
-                ], 500);
-            }
-
-            $chunk = $response->json();
-
-            if (!is_array($chunk) || empty($chunk)) {
-                break;
-            }
-
-            $allTxs = array_merge($allTxs, $chunk);
-
-            if (count($chunk) < 25) {
-                break;
-            }
-
-            $lastTx = end($chunk);
-            $lastSeenTxId = $lastTx['txid'] ?? null;
-
-            if (!$lastSeenTxId) {
-                break;
-            }
+        try {
+            $addressTransactions = $this->service->getAddressTransactions($address);
+            return response()->json(AddressTransactionsResource::make($addressTransactions));
+        } catch (BitcoinTransactionException $e) {
+            return response()->json([
+                'error' => $e->getMessage(),
+                'context' => $e->getContext(),
+            ], $e->getStatus());
+        } catch (Exception $e) {
+            return response()->json([
+                'error' => 'Failed to get address transactions',
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
         }
-
-        return response()->json([
-            'address' => $address,
-            'transactions_count' => count($allTxs),
-            'transactions' => $allTxs,
-        ]);
     }
 }
